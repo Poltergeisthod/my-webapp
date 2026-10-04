@@ -212,6 +212,26 @@ const VARIANTS = {
     ]
   }
 };
+VARIANTS.server = {
+  kind: 'server',
+  hook1: 'Целый сервер', hook2: 'ради одного бота?',
+  warn: 'Переплата за пустой сервер',
+  msgs: [{ t: 1.05, fail: true }],
+  bullets: ['Платишь только за бота', 'Не нужен целый сервер', 'Без настройки Linux']
+};
+VARIANTS.confused = {
+  kind: 'confused',
+  hook1: 'Сделал бота,', hook2: 'а как его запустить?',
+  warn: 'Бот так и не запущен',
+  msgs: [],
+  bullets: ['Без Linux и настроек', 'Загрузил — и бот работает', 'Дёшево'],
+  code: ['bot = Bot(TOKEN)', '', '@bot.command("start")', 'def start(msg):', '    msg.reply("Привет!")', '', 'bot.run()'],
+  words: [
+    ['VPS', 0.62, 230, 1070, -8], ['Linux', 0.76, 780, 1050, 7], ['SSH', 0.90, 520, 1150, -4],
+    ['Docker', 1.04, 260, 1250, 6], ['systemd', 1.18, 760, 1240, -6], ['IP-адрес', 1.32, 470, 1345, 5],
+    ['порты', 1.46, 820, 1380, -7], ['root', 1.58, 200, 1390, 4]
+  ]
+};
 const hashParts = location.hash.slice(1).split(',');
 const VKEY = hashParts.find(p => VARIANTS[p]) || 'pc';
 const V = VARIANTS[VKEY];
@@ -324,6 +344,12 @@ function scene1(t) {
   fitText(V.hook2, W / 2, 465 + (1 - easeOut(hp)) * 30, 960);
   ctx.restore();
 
+  if (V.kind) {
+    if (V.kind === 'server') sceneServer(t); else sceneConfused(t);
+    warnRow(t, 1520);
+    return;
+  }
+
   // Window: a chat, or a terminal.
   const cx = 90, cy = 560, cw = 900, ch = 860;
   ctx.fillStyle = term ? '#070a12' : C.card;
@@ -398,16 +424,181 @@ function scene1(t) {
     MSGS.forEach((m, i) => bubble(m, ys[i], t));
   }
 
+  warnRow(t, cy + 790);
+}
+
+function warnRow(t, y) {
   const wp = seg(t, 1.78, 1.95);
-  if (wp > 0) {
+  if (wp <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = wp;
+  warning(150, y, 52);
+  font(40, false);
+  ctx.fillStyle = C.red;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(V.warn, 200, y + 5);
+  ctx.restore();
+}
+
+// A tall server rack with one tiny bot in the corner, and what you pay for.
+function sceneServer(t) {
+  const rx = 190, ry = 600, rw = 700, unitH = 66, gap = 8, n = 8;
+  const fp = easeOut(seg(t, 0.05, 0.25));
+  ctx.save();
+  ctx.globalAlpha = fp;
+  ctx.strokeStyle = C.line;
+  ctx.lineWidth = 6;
+  rr(rx - 20, ry - 20, rw + 40, n * (unitH + gap) + 32, 24);
+  ctx.stroke();
+  ctx.restore();
+  for (let i = 0; i < n; i++) {
+    const p = easeOut(seg(t, 0.1 + i * 0.045, 0.25 + i * 0.045));
+    if (p <= 0) continue;
+    const y = ry + i * (unitH + gap);
+    const x = rx - (1 - p) * 700;
+    const last = i === n - 1;
     ctx.save();
-    ctx.globalAlpha = wp;
-    warning(150, cy + 790, 52);
-    font(40, false);
-    ctx.fillStyle = C.red;
+    ctx.globalAlpha = p;
+    ctx.fillStyle = C.card;
+    rr(x, y, rw, unitH, 12);
+    ctx.fill();
+    ctx.fillStyle = C.line;
+    for (let k = 0; k < 10; k++) {
+      if (last && k < 5) continue;
+      ctx.fillRect(x + 300 + k * 36, y + 18, 16, unitH - 36);
+    }
+    ctx.fillStyle = noise(Math.floor(t * 8) + i * 13) > 0.35 ? C.green : '#1d4d33';
+    ctx.beginPath();
+    ctx.arc(x + 40, y + unitH / 2, 9, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = noise(Math.floor(t * 6) + i * 7 + 50) > 0.5 ? C.yellow : '#4d4120';
+    ctx.beginPath();
+    ctx.arc(x + 72, y + unitH / 2, 9, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  const bp = seg(t, 0.55, 0.72);
+  if (bp > 0) {
+    const by = ry + (n - 1) * (unitH + gap) + unitH / 2;
+    botFace(rx + 135, by + 5, 17 * (0.6 + 0.4 * back(bp)), C.green, true);
+    ctx.save();
+    ctx.globalAlpha = bp;
+    font(36, false);
+    ctx.fillStyle = C.yellow;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(V.warn, 200, cy + 795);
+    ctx.fillText('← твой бот', rx + 170, by + 3);
+    ctx.restore();
+  }
+
+  const y1 = ry + n * (unitH + gap) + 70;
+  usageBar('Бот использует', 0.03, y1, easeOut(seg(t, 0.85, 1.0)), C.green, () => '3%');
+  const pay = easeOut(seg(t, 1.05, 1.45));
+  usageBar('А платишь за', 1, y1 + 130, pay, C.red, () => Math.round(100 * pay) + '%');
+}
+
+function usageBar(label, frac, y, p, color, value) {
+  if (p <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = clamp(p * 3);
+  font(42, false);
+  ctx.fillStyle = C.text;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(label, 120, y);
+  font(48, true);
+  ctx.fillStyle = color;
+  ctx.textAlign = 'right';
+  ctx.fillText(value(), 960, y);
+  ctx.fillStyle = C.line;
+  rr(120, y + 22, 840, 36, 18);
+  ctx.fill();
+  ctx.fillStyle = color;
+  rr(120, y + 22, Math.max(36, 840 * frac * p), 36, 18);
+  ctx.fill();
+  ctx.restore();
+}
+
+// A finished bot.py, buried under server jargon.
+function sceneConfused(t) {
+  const fp = easeOut(seg(t, 0.05, 0.3));
+  const x = 200, y = 570, w = 680, h = 420;
+  ctx.save();
+  ctx.globalAlpha = fp;
+  ctx.translate(0, (1 - fp) * 40);
+  ctx.fillStyle = '#070a12';
+  rr(x, y, w, h, 30);
+  ctx.fill();
+  ctx.strokeStyle = C.line;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = C.line;
+  ctx.fillRect(x, y + 80, w, 3);
+  ctx.font = '700 34px "JetBrains Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = C.muted;
+  ctx.fillText('bot.py', x + 36, y + 42);
+  ctx.font = '700 30px "JetBrains Mono", monospace';
+  V.code.forEach((line, i) => {
+    if (t < 0.1 + i * 0.05) return;
+    ctx.fillStyle = line.startsWith('@') ? C.yellow : line.includes('"') ? C.green : C.text;
+    fitText(line, x + 36, y + 120 + i * 44, w - 72);
+  });
+  ctx.restore();
+
+  // "Ready" tick, then the question.
+  const rp = seg(t, 0.45, 0.6);
+  if (rp > 0) {
+    const s = 0.6 + 0.4 * back(rp);
+    ctx.save();
+    ctx.translate(x + w - 50, y + 42);
+    ctx.scale(s, s);
+    ctx.fillStyle = C.green;
+    ctx.beginPath();
+    ctx.arc(0, 0, 26, 0, TAU);
+    ctx.fill();
+    check(0, 0, 26, C.ink, 6);
+    ctx.restore();
+  }
+
+  for (const [qx, qy, start] of [[110, 800, 1.0], [975, 760, 1.2]]) {
+    const q = seg(t, start, start + 0.2);
+    if (q <= 0) continue;
+    ctx.save();
+    ctx.translate(qx, qy);
+    ctx.rotate(Math.sin(t * 7 + qx) * 0.15);
+    ctx.scale(0.6 + 0.4 * back(q), 0.6 + 0.4 * back(q));
+    font(170, true);
+    ctx.fillStyle = C.red;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('?', 0, 0);
+    ctx.restore();
+  }
+
+  for (const [word, start, wx, wy, rot] of V.words) {
+    const p = seg(t, start, start + 0.15);
+    if (p <= 0) continue;
+    ctx.save();
+    ctx.translate(wx, wy);
+    ctx.rotate((rot + Math.sin(t * 9 + wx) * 2) * Math.PI / 180);
+    const s = 0.5 + 0.5 * back(p);
+    ctx.scale(s, s);
+    ctx.font = '700 44px "JetBrains Mono", monospace';
+    const ww = ctx.measureText(word).width + 56;
+    ctx.fillStyle = 'rgba(255,77,94,0.16)';
+    rr(-ww / 2, -40, ww, 80, 20);
+    ctx.fill();
+    ctx.strokeStyle = C.red;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.fillStyle = C.text;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(word, 0, 2);
     ctx.restore();
   }
 }
@@ -497,7 +688,7 @@ function scene2(t) {
 
   // Bullets slide in, then slide out for the bonus.
   const out = easeInOut(seg(t, 5.0, 5.3));
-  TEXT.bullets.forEach((b, i) => {
+  (V.bullets || TEXT.bullets).forEach((b, i) => {
     const p = easeOut(seg(t, 3.0 + i * 0.3, 3.25 + i * 0.3));
     if (p <= 0 || out >= 1) return;
     const y = 1050 + i * 130;

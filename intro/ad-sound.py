@@ -51,7 +51,23 @@ def chime(t0, freqs, gap, vol=0.16):
         tone(t0 + n * gap, f * 2, f * 2, 0.4, vol * 0.3, 9)
 
 # Scene 1: chat messages, or keystrokes in a terminal.
-if VARIANT == 'term':
+if VARIANT == 'server':
+    for k in range(8):
+        noise(0.10 + k * 0.045, 0.04, 0.3, 70, 0.6)
+        tone(0.10 + k * 0.045, 160, 120, 0.06, 0.15, 30)
+    chime(0.55, [880, 1320], 0.06, 0.13)
+    tone(0.85, 600, 700, 0.15, 0.12, 10)
+    tone(1.05, 300, 1200, 0.4, 0.14, 2)
+    chime(1.45, [1568, 2093], 0.05, 0.16)
+elif VARIANT == 'confused':
+    for k in range(7):
+        noise(0.10 + k * 0.05, 0.025, 0.3, 120, 0.95)
+    chime(0.45, [880, 1320], 0.06, 0.13)
+    for k, t in enumerate((0.62, 0.76, 0.90, 1.04, 1.18, 1.32, 1.46, 1.58)):
+        tone(t, 500 + (k % 4) * 120, 300 + (k % 3) * 90, 0.12, 0.16, 14, 'square')
+    tone(1.0, 400, 700, 0.25, 0.12, 6)
+    tone(1.2, 450, 800, 0.25, 0.12, 6)
+elif VARIANT == 'term':
     for k in range(9):
         noise(0.10 + k * 0.033, 0.025, 0.35, 120, 0.95)
     tone(0.45, 1320, 1320, 0.15, 0.16, 18)
