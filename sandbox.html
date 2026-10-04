@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Песочница стихий</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&display=swap">
+<style>
+  /* Layout: a pixel world in a vertical 9:16 frame; a strip of elements and a row of controls beneath it */
+  :root {
+    --ink: #090b15;
+    --panel: #141829;
+    --line: #272d49;
+    --text: #eef0fb;
+    --muted: #8e95b8;
+    --spark: #ffb52e;
+    --font-ui: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+    color-scheme: dark;
+  }
+  html { height: 100%; box-sizing: border-box; background: var(--ink); }
+  body { height: 100%; margin: 0; background: var(--ink); color: var(--text); font-family: var(--font-ui); }
+  *, *::before, *::after { box-sizing: border-box; }
+
+  .app {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-inline: 16px;
+    padding-block: 12px;
+  }
+  .app.rec { padding: 0; gap: 0; }
+  .stage-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    place-items: center;
+  }
+  canvas {
+    display: block;
+    border-radius: 16px;
+    touch-action: none;
+    cursor: crosshair;
+    box-shadow: 0 0 0 1px var(--line);
+  }
+  .app.rec canvas { border-radius: 0; box-shadow: none; }
+
+  .toast {
+    position: absolute;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    max-width: calc(100% - 32px);
+    padding: 10px 16px;
+    border-radius: 999px;
+    background: var(--panel);
+    color: var(--text);
+    font-size: 14px;
+    text-align: center;
+    pointer-events: none;
+    transition: opacity .4s;
+  }
+  .toast.fade { opacity: 0; }
+
+  .controls {
+    width: 100%;
+    max-width: 620px;
+    margin-inline: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+  .mats {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+
+  button, select {
+    font: 700 13px/1 var(--font-ui);
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 10px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color .15s, background .15s;
+  }
+  select { appearance: none; padding-right: 30px;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 17px) 55%, calc(100% - 12px) 55%;
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+  }
+  button:hover, select:hover { border-color: var(--muted); }
+  button:focus-visible, select:focus-visible { outline: 2px solid var(--spark); outline-offset: 2px; }
+
+  .mat { display: inline-flex; align-items: center; gap: 7px; flex: none; }
+  .mat i {
+    width: 12px; height: 12px; border-radius: 3px;
+    background: var(--c);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.15);
+  }
+  .mat[aria-pressed="true"] { border-color: var(--spark); background: #2a2216; }
+  .hint { margin: 0; font-size: 12.5px; color: var(--muted); text-align: center; text-wrap: balance; }
+</style>
+</head>
+<body>
+
+<main class="app" id="app">
+  <div class="stage-wrap" id="wrap">
+    <canvas id="stage" aria-label="Мир из песчинок, по которому можно рисовать"></canvas>
+    <div class="toast" id="toast" hidden>Нажмите на экран, чтобы вернуть кнопки</div>
+  </div>
+
+  <section class="controls" id="controls" aria-label="Управление">
+    <div class="mats" id="mats">
+      <button class="mat" data-m="1" aria-pressed="true"><i style="--c:#e6c46e"></i>Песок</button>
+      <button class="mat" data-m="2" aria-pressed="false"><i style="--c:#2f7fe0"></i>Вода</button>
+      <button class="mat" data-m="4" aria-pressed="false"><i style="--c:#ff6a1a"></i>Лава</button>
+      <button class="mat" data-m="5" aria-pressed="false"><i style="--c:#ffd34d"></i>Огонь</button>
+      <button class="mat" data-m="10" aria-pressed="false"><i style="--c:#45434f"></i>Порох</button>
+      <button class="mat" data-m="6" aria-pressed="false"><i style="--c:#3fbf58"></i>Растение</button>
+      <button class="mat" data-m="8" aria-pressed="false"><i style="--c:#a6ff3a"></i>Кислота</button>
+      <button class="mat" data-m="3" aria-pressed="false"><i style="--c:#7b7f8f"></i>Камень</button>
+      <button class="mat" data-m="0" aria-pressed="false"><i style="--c:#090b15"></i>Ластик</button>
+    </div>
+    <div class="row">
+      <select id="scene" aria-label="Сцена">
+        <option value="volcano">Сцена: Вулкан</option>
+        <option value="dynamite">Сцена: Динамит</option>
+        <option value="hourglass">Сцена: Песочные часы</option>
+        <option value="empty">Сцена: Пустой лист</option>
+      </select>
+      <button id="reload">Заново</button>
+      <button id="brush">Кисть: средняя</button>
+      <button id="pause">Пауза</button>
+      <button id="rec">Режим съёмки</button>
+    </div>
+    <p class="hint">Рисуйте пальцем по экрану. Держите палец на месте, чтобы сыпать без остановки.</p>
+  </section>
+</main>
+
+<script>
+(() => {
+  const W = 1080, H = 1920;          // screen canvas, 9:16
+  const GW = 180, GH = 320, N = GW * GH, CELL = W / GW;  // simulation grid, 6px per grain
+
+  const cv = document.getElementById('stage');
+  const ctx = cv.getContext('2d');
+  cv.width = W; cv.height = H;
+  const wrap = document.getElementById('wrap');
+  const app = document.getElementById('app');
+  const controls = document.getElementById('controls');
+  const toast = document.getElementById('toast');
+
+  function fit() {
+    const r = wrap.getBoundingClientRect();
+    const s = Math.max(0.01, Math.min(r.width / W, r.height / H));
+    cv.style.width = W * s + 'px';
+    cv.style.height = H * s + 'px';
+  }
+  new ResizeObserver(fit).observe(wrap);
+  fit();
+
+  /* ---------- Elements ---------- */
+  const E = 0, SAND = 1, WATER = 2, STONE = 3, LAVA = 4, FIRE = 5, PLANT = 6, STEAM = 7, ACID = 8, SMOKE = 9, POWDER = 10;
+  // Heavier things sink through lighter ones; 9 marks solids that never move.
+  const DENS = [0, 4, 2, 9, 3, 0, 9, 0, 2, 0, 4];
+  const SOLID = [0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0];
+
+  const type = new Uint8Array(N);
+  const life = new Uint16Array(N);
+  const shade = new Uint8Array(N);
+  const stamp = new Uint32Array(N);
+  let tick = 1;
+  const rnd = Math.random;
+
+  function set(i, t) {
+    type[i] = t;
+    shade[i] = (rnd() * 4) | 0;
+    life[i] = t === FIRE ? 20 + rnd() * 45 : t === STEAM ? 200 + rnd() * 300 : t === SMOKE ? 40 + rnd() * 70 : 0;
+    stamp[i] = tick;
+  }
+  function mv(a, b) {
+    let t = type[a]; type[a] = type[b]; type[b] = t;
+    t = life[a]; life[a] = life[b]; life[b] = t;
+    t = shade[a]; shade[a] = shade[b]; shade[b] = t;
+    stamp[a] = tick; stamp[b] = tick;
+  }
+  function canEnter(t, j) {
+    const tj = type[j];
+    return tj === E || (!SOLID[tj] && DENS[t] > DENS[tj]);
+  }
+  function randNb(x, y) {
+    const dx = ((rnd() * 3) | 0) - 1, dy = ((rnd() * 3) | 0) - 1;
+    if (!dx && !dy) return -1;
+    const nx = x + dx, ny = y + dy;
+    if (nx < 0 || nx >= GW || ny < 0 || ny >= GH) return -1;
+    return ny * GW + nx;
+  }
+  function touching(x, y, a, b) {
+    for (let dy = -1; dy <= 1; dy++) {
+      const ny = y + dy;
+      if (ny < 0 || ny >= GH) continue;
+      for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx;
+        if (nx < 0 || nx >= GW) continue;
+        const t = type[ny * GW + nx];
+        if (t === a || t === b) return true;
+      }
+    }
+    return false;
+  }
+
+  let shake = 0;
+  function explode(cx, cy, r) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx * dx + dy * dy > r * r) continue;
+        const x = cx + dx, y = cy + dy;
+        if (x < 0 || x >= GW || y < 0 || y >= GH) continue;
+        const j = y * GW + x, t = type[j];
+        if (t === WATER) set(j, STEAM);
+        else if (t === E || t === PLANT || t === POWDER || t === SMOKE) set(j, rnd() < 0.85 ? FIRE : SMOKE);
+      }
+    }
+    shake = Math.min(40, shake + 5);
+  }
+
+  // Falls straight down, otherwise slides diagonally.
+  function fall(x, y, i, t) {
+    if (y >= GH - 1) return false;
+    const d = i + GW;
+    if (canEnter(t, d)) { mv(i, d); return true; }
+    const s = rnd() < 0.5 ? -1 : 1;
+    if (x + s >= 0 && x + s < GW && canEnter(t, d + s)) { mv(i, d + s); return true; }
+    if (x - s >= 0 && x - s < GW && canEnter(t, d - s)) { mv(i, d - s); return true; }
+    return false;
+  }
+  function flow(x, y, i, t, reach) {
+    if (fall(x, y, i, t)) return;
+    const s0 = rnd() < 0.5 ? -1 : 1;
+    for (const s of [s0, -s0]) {
+      let best = -1;
+      for (let n = 1; n <= reach; n++) {
+        const xx = x + s * n;
+        if (xx < 0 || xx >= GW) break;
+        const j = y * GW + xx;
+        if (!canEnter(t, j)) break;
+        best = j;
+      }
+      if (best >= 0) { mv(i, best); return; }
+    }
+  }
+  function rise(x, y, i) {
+    const r = rnd();
+    const nx = x + (r < 0.33 ? -1 : r < 0.66 ? 0 : 1);
+    const ny = rnd() < 0.8 ? y - 1 : y;
+    if (nx < 0 || nx >= GW || ny < 0) return false;
+    const j = ny * GW + nx, tj = type[j];
+    if (tj === E || (!SOLID[tj] && DENS[tj] > 0 && rnd() < 0.3)) { mv(i, j); return true; }
+    return false;
+  }
+
+  function update(x, y, i, t) {
+    switch (t) {
+      case SAND:
+        fall(x, y, i, t);
+        break;
+      case POWDER:
+        if (touching(x, y, FIRE, LAVA)) { explode(x, y, 6); return; }
+        fall(x, y, i, t);
+        break;
+      case WATER: {
+        const j = randNb(x, y);
+        if (j >= 0) {
+          if (type[j] === LAVA) { set(j, STONE); set(i, STEAM); return; }
+          if (type[j] === FIRE) { set(j, STEAM); return; }
+        }
+        flow(x, y, i, t, 4);
+        break;
+      }
+      case ACID: {
+        const j = randNb(x, y);
+        if (j >= 0) {
+          const tj = type[j];
+          if ((tj === SAND || tj === STONE || tj === PLANT || tj === POWDER || tj === LAVA) && rnd() < 0.2) {
+            set(j, rnd() < 0.4 ? SMOKE : E);
+            if (rnd() < 0.3) { set(i, SMOKE); return; }
+          }
+        }
+        flow(x, y, i, t, 3);
+        break;
+      }
+      case LAVA: {
+        const j = randNb(x, y);
+        if (j >= 0) {
+          const tj = type[j];
+          if (tj === PLANT && rnd() < 0.3) set(j, FIRE);
+          else if (tj === POWDER) { explode(j % GW, (j / GW) | 0, 6); return; }
+          else if (tj === WATER) { set(j, STEAM); set(i, STONE); return; }
+          else if (tj === E && j < i - GW + 2 && rnd() < 0.008) set(j, rnd() < 0.6 ? FIRE : SMOKE);
+        }
+        if (rnd() < 0.55) return; // lava is thick and moves slowly
+        flow(x, y, i, t, 1);
+        break;
+      }
+      case FIRE: {
+        if (--life[i] <= 0) { if (rnd() < 0.35) set(i, SMOKE); else type[i] = E; return; }
+        for (let k = 0; k < 2; k++) {
+          const j = randNb(x, y);
+          if (j < 0) continue;
+          const tj = type[j];
+          if (tj === PLANT && rnd() < 0.2) set(j, FIRE);
+          else if (tj === POWDER) { explode(j % GW, (j / GW) | 0, 6); return; }
+        }
+        if (rnd() < 0.7 && y > 0) {
+          const nx = x + ((rnd() * 3) | 0) - 1;
+          if (nx >= 0 && nx < GW) {
+            const j = (y - 1) * GW + nx;
+            if (type[j] === E) mv(i, j);
+          }
+        }
+        break;
+      }
+      case STEAM:
+        if (--life[i] <= 0) { if (rnd() < 0.6) set(i, WATER); else type[i] = E; return; }
+        // Steam that reaches the ceiling turns back into water and rains down.
+        if (y === 0 && rnd() < 0.015) { set(i, WATER); return; }
+        rise(x, y, i);
+        break;
+      case SMOKE:
+        if (--life[i] <= 0) { type[i] = E; return; }
+        rise(x, y, i);
+        break;
+      case PLANT:
+        if (rnd() < 0.03) {
+          const j = randNb(x, y);
+          if (j >= 0 && type[j] === WATER) set(j, PLANT);
+        }
+        break;
+    }
+  }
+
+  function step() {
+    tick++;
+    const ltr = tick & 1;
+    for (let y = GH - 1; y >= 0; y--) {
+      const row = y * GW;
+      for (let k = 0; k < GW; k++) {
+        const x = ltr ? k : GW - 1 - k;
+        const i = row + x;
+        const t = type[i];
+        if (t === E || t === STONE || stamp[i] === tick) continue;
+        update(x, y, i, t);
+      }
+    }
+  }
+
+  /* ---------- Colors ---------- */
+  const pack = (r, g, b) => ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0;
+  function hex(h, k = 1) {
+    const n = parseInt(h.slice(1), 16);
+    const c = v => Math.max(0, Math.min(255, Math.round(v * k)));
+    return pack(c(n >> 16), c((n >> 8) & 255), c(n & 255));
+  }
+  const BASE = {
+    [SAND]: '#e6c46e', [WATER]: '#2f7fe0', [STONE]: '#6f7384', [PLANT]: '#3fbf58',
+    [STEAM]: '#aebcd4', [ACID]: '#a6ff3a', [SMOKE]: '#3c3f50', [POWDER]: '#45434f'
+  };
+  const SHADES = [0.86, 0.94, 1, 1.08];
+  const COLORS = [];
+  for (const t in BASE) COLORS[t] = SHADES.map(k => hex(BASE[t], k));
+  const LAVA_C = ['#ff3d12', '#ff5a1a', '#ff7a1f', '#ffa02e'].map(h => hex(h));
+  const FIRE_C = ['#ff3d1f', '#ff8a1f', '#ffc83d', '#fff1a8'].map(h => hex(h));
+  const BG = [];
+  for (let y = 0; y < GH; y++) {
+    const k = y / GH;
+    BG[y] = pack(Math.round(9 + k * 10), Math.round(11 + k * 12), Math.round(21 + k * 22));
+  }
+
+  const small = document.createElement('canvas');
+  small.width = GW; small.height = GH;
+  const sctx = small.getContext('2d');
+  const img = sctx.createImageData(GW, GH);
+  const buf = new Uint32Array(img.data.buffer);
+
+  // Lava and fire also go to a separate layer that is blurred by upscaling and added on top as glow.
+  const glow = document.createElement('canvas');
+  glow.width = GW; glow.height = GH;
+  const gctx = glow.getContext('2d');
+  const gimg = gctx.createImageData(GW, GH);
+  const gbuf = new Uint32Array(gimg.data.buffer);
+  const glowTiny = document.createElement('canvas');
+  glowTiny.width = GW / 4; glowTiny.height = GH / 4;
+  const tctx = glowTiny.getContext('2d');
+
+  function render() {
+    for (let y = 0; y < GH; y++) {
+      const row = y * GW, bg = BG[y];
+      for (let x = 0; x < GW; x++) {
+        const i = row + x, t = type[i];
+        if (t === E) { buf[i] = bg; gbuf[i] = 0; continue; }
+        if (t === LAVA) {
+          const c = LAVA_C[(shade[i] + ((tick + x * 7 + y * 3) >> 4)) & 3];
+          buf[i] = c; gbuf[i] = c;
+        } else if (t === FIRE) {
+          const l = life[i];
+          const c = FIRE_C[l > 45 ? 3 : l > 28 ? 2 : l > 14 ? 1 : 0];
+          buf[i] = c; gbuf[i] = c;
+        } else {
+          buf[i] = COLORS[t][shade[i]];
+          gbuf[i] = t === ACID ? COLORS[t][0] : 0;
+        }
+      }
+    }
+    sctx.putImageData(img, 0, 0);
+    gctx.putImageData(gimg, 0, 0);
+    tctx.clearRect(0, 0, glowTiny.width, glowTiny.height);
+    tctx.imageSmoothingEnabled = true;
+    tctx.drawImage(glow, 0, 0, glowTiny.width, glowTiny.height);
+
+    ctx.save();
+    if (shake > 0.5) ctx.translate((rnd() * 2 - 1) * shake, (rnd() * 2 - 1) * shake);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(small, 0, 0, W, H);
+    ctx.imageSmoothingEnabled = true;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.5;
+    ctx.drawImage(glowTiny, 0, 0, W, H);
+    ctx.globalAlpha = 0.25;
+    ctx.drawImage(glow, 0, 0, W, H);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+  }
+
+  /* ---------- Scenes ---------- */
+  let emitters = [], sceneTime = 0, sceneKey = 'volcano';
+  function clearWorld() {
+    type.fill(0); life.fill(0);
+    emitters = []; sceneTime = 0; shake = 0;
+  }
+  function fillCell(x, y, t) {
+    if (x < 0 || x >= GW || y < 0 || y >= GH) return;
+    set(y * GW + x, t);
+  }
+
+  const scenes = {
+    volcano() {
+      const top = x => 176 + Math.max(0, Math.abs(x - 120) - 5) * 1.8;
+      for (let x = 0; x < GW; x++) {
+        for (let y = 0; y < GH; y++) {
+          if (y >= 306 || y >= top(x)) fillCell(x, y, STONE);
+        }
+      }
+      // Crater rim.
+      for (let y = 166; y < 176; y++) { fillCell(113, y, STONE); fillCell(127, y, STONE); }
+      // Lake at the foot of the mountain.
+      for (let x = 0; x < 44; x++) {
+        for (let y = 258; y < 306; y++) if (y < top(x)) fillCell(x, y, WATER);
+      }
+      // Grass and trees on the slopes.
+      for (let x = 46; x < 160; x++) {
+        if (x > 110 && x < 130) continue;
+        const s = Math.floor(top(x));
+        fillCell(x, s - 1, PLANT);
+        if (rnd() < 0.5) fillCell(x, s - 2, PLANT);
+        if (x % 13 === 0) for (let h = 3; h < 10 + (x % 5); h++) fillCell(x, s - h, PLANT);
+      }
+      // A powder store on the right slope.
+      for (let x = 160; x < 178; x++) {
+        const s = Math.floor(top(x));
+        for (let h = 1; h < 8; h++) fillCell(x, s - h, POWDER);
+      }
+      emitters.push({ x0: 116, x1: 124, y: 170, type: LAVA, rate: 3, start: 0.5, on: 9, off: 6 });
+    },
+    dynamite() {
+      for (let x = 0; x < GW; x++) for (let y = 306; y < GH; y++) fillCell(x, y, STONE);
+      for (let x = 60; x <= 120; x++) for (let y = 250; y < 306; y++) fillCell(x, y, POWDER);
+      for (let x = 60; x <= 120; x++) {
+        const h = Math.max(0, 28 - Math.abs(x - 90));
+        for (let y = 250 - h; y < 250; y++) fillCell(x, y, SAND);
+      }
+      // Fuse in a stone tube, lit from the top.
+      for (let y = 100; y < 250; y++) {
+        fillCell(86, y, STONE); fillCell(94, y, STONE);
+        for (let x = 87; x <= 93; x++) fillCell(x, y, POWDER);
+      }
+      // Pools on both sides.
+      for (let x = 0; x < 52; x++) for (let y = 270; y < 306; y++) fillCell(x, y, WATER);
+      for (let x = 128; x < GW; x++) for (let y = 270; y < 306; y++) fillCell(x, y, WATER);
+      emitters.push({ x0: 88, x1: 92, y: 98, type: FIRE, rate: 4, start: 1.5, dur: 0.5 });
+    },
+    hourglass() {
+      const cx = 90;
+      const hw = y => 3 + Math.abs(y - 160) * 0.5;
+      for (let y = 30; y <= 290; y++) {
+        const w = Math.floor(hw(y));
+        for (let k = 1; k <= 3; k++) { fillCell(cx - w - k, y, STONE); fillCell(cx + w + k, y, STONE); }
+      }
+      for (let x = cx - 72; x <= cx + 72; x++) {
+        for (let y = 27; y < 30; y++) fillCell(x, y, STONE);
+        for (let y = 291; y < 294; y++) fillCell(x, y, STONE);
+      }
+      for (let y = 45; y < 140; y++) {
+        const w = Math.floor(hw(y));
+        for (let x = cx - w; x <= cx + w; x++) fillCell(x, y, SAND);
+      }
+    },
+    empty() {
+      for (let x = 0; x < GW; x++) for (let y = 314; y < GH; y++) fillCell(x, y, STONE);
+    }
+  };
+  function loadScene(key) {
+    sceneKey = key;
+    clearWorld();
+    scenes[key]();
+  }
+  function runEmitters(dt) {
+    sceneTime += dt;
+    for (const em of emitters) {
+      const t = sceneTime - (em.start || 0);
+      if (t < 0) continue;
+      if (em.dur && t > em.dur) continue;
+      if (em.on && t % (em.on + em.off) > em.on) continue;
+      for (let k = 0; k < em.rate; k++) {
+        const x = em.x0 + ((rnd() * (em.x1 - em.x0 + 1)) | 0);
+        const j = em.y * GW + x;
+        if (type[j] === E) set(j, em.type);
+      }
+    }
+  }
+
+  /* ---------- Drawing with a finger ---------- */
+  let mat = SAND, brush = 5;
+  const BRUSHES = [[2, 'тонкая'], [5, 'средняя'], [10, 'толстая']];
+  let brushIdx = 1;
+  let painting = false, px = 0, py = 0;
+
+  function paintAt(cx, cy) {
+    const r = brush;
+    const dense = mat === STONE || mat === PLANT || mat === E;
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (dx * dx + dy * dy > r * r) continue;
+        const x = cx + dx, y = cy + dy;
+        if (x < 0 || x >= GW || y < 0 || y >= GH) continue;
+        const j = y * GW + x;
+        if (mat === E) { type[j] = E; continue; }
+        const tj = type[j];
+        if (tj !== E && tj !== SMOKE && tj !== STEAM) continue;
+        if (dense || rnd() < 0.3) set(j, mat);
+      }
+    }
+  }
+  function paintLine(x0, y0, x1, y1) {
+    const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / Math.max(1, brush / 2)));
+    for (let k = 0; k <= n; k++) {
+      paintAt(Math.round(x0 + (x1 - x0) * k / n), Math.round(y0 + (y1 - y0) * k / n));
+    }
+  }
+  function toGrid(e) {
+    const r = cv.getBoundingClientRect();
+    return {
+      x: Math.floor((e.clientX - r.left) / r.width * GW),
+      y: Math.floor((e.clientY - r.top) / r.height * GH)
+    };
+  }
+  cv.addEventListener('pointerdown', e => {
+    if (app.classList.contains('rec')) { setRec(false); return; }
+    painting = true;
+    cv.setPointerCapture(e.pointerId);
+    const p = toGrid(e);
+    px = p.x; py = p.y;
+    paintAt(px, py);
+  });
+  cv.addEventListener('pointermove', e => {
+    if (!painting) return;
+    const p = toGrid(e);
+    paintLine(px, py, p.x, p.y);
+    px = p.x; py = p.y;
+  });
+  const stop = () => { painting = false; };
+  cv.addEventListener('pointerup', stop);
+  cv.addEventListener('pointercancel', stop);
+
+  /* ---------- Loop and controls ---------- */
+  let running = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (running) {
+      if (painting) paintAt(px, py);
+      runEmitters(dt);
+      step();
+      shake *= Math.exp(-dt * 8);
+    }
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  document.getElementById('mats').addEventListener('click', e => {
+    const b = e.target.closest('.mat');
+    if (!b) return;
+    mat = Number(b.dataset.m);
+    document.querySelectorAll('.mat').forEach(m => m.setAttribute('aria-pressed', String(m === b)));
+  });
+
+  const sceneSel = document.getElementById('scene');
+  sceneSel.addEventListener('change', () => loadScene(sceneSel.value));
+  document.getElementById('reload').addEventListener('click', () => loadScene(sceneKey));
+
+  const brushBtn = document.getElementById('brush');
+  brushBtn.addEventListener('click', () => {
+    brushIdx = (brushIdx + 1) % BRUSHES.length;
+    brush = BRUSHES[brushIdx][0];
+    brushBtn.textContent = 'Кисть: ' + BRUSHES[brushIdx][1];
+  });
+
+  const pauseBtn = document.getElementById('pause');
+  function syncPause() { pauseBtn.textContent = running ? 'Пауза' : 'Старт'; }
+  pauseBtn.addEventListener('click', () => { running = !running; syncPause(); });
+  syncPause();
+
+  let wakeLock = null, toastTimer = 0;
+  function setRec(on) {
+    app.classList.toggle('rec', on);
+    controls.hidden = on;
+    clearTimeout(toastTimer);
+    if (on) {
+      toast.hidden = false;
+      toast.classList.remove('fade');
+      toastTimer = setTimeout(() => {
+        toast.classList.add('fade');
+        toastTimer = setTimeout(() => { toast.hidden = true; }, 400);
+      }, 1800);
+      if (navigator.wakeLock) navigator.wakeLock.request('screen').then(l => { wakeLock = l; }).catch(() => {});
+    } else {
+      toast.hidden = true;
+      if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    }
+  }
+  document.getElementById('rec').addEventListener('click', () => setRec(true));
+
+  loadScene('volcano');
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
