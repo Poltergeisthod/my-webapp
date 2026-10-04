@@ -1,4 +1,5 @@
-import math, random, wave, struct
+import math, random, wave, struct, sys
+VARIANT = sys.argv[1] if len(sys.argv) > 1 else 'pc'
 SR = 44100
 DUR = 7.0
 buf = [0.0] * int(SR * DUR)
@@ -49,12 +50,21 @@ def chime(t0, freqs, gap, vol=0.16):
         tone(t0 + n * gap, f, f, 0.6, vol, 6)
         tone(t0 + n * gap, f * 2, f * 2, 0.4, vol * 0.3, 9)
 
-# Scene 1: chat.
-for t in (0.20, 1.10, 1.32, 1.54):
-    tone(t, 900, 1400, 0.07, 0.22, 25)
-for t in (1.15, 1.37, 1.59):
-    tone(t, 200, 180, 0.12, 0.18, 18, 'square')
-chime(0.42, [660, 990], 0.08, 0.16)
+# Scene 1: chat messages, or keystrokes in a terminal.
+if VARIANT == 'term':
+    for k in range(9):
+        noise(0.10 + k * 0.033, 0.025, 0.35, 120, 0.95)
+    tone(0.45, 1320, 1320, 0.15, 0.16, 18)
+    tone(0.60, 990, 990, 0.08, 0.08, 30)
+    tone(0.92, 300, 200, 0.15, 0.14, 12, 'square')
+    for t in (1.10, 1.32, 1.54):
+        tone(t, 200, 180, 0.14, 0.2, 16, 'square')
+else:
+    for t in (0.20, 1.10, 1.32, 1.54):
+        tone(t, 900, 1400, 0.07, 0.22, 25)
+    for t in (1.15, 1.37, 1.59):
+        tone(t, 200, 180, 0.12, 0.18, 18, 'square')
+    chime(0.42, [660, 990], 0.08, 0.16)
 noise(0.78, 0.03, 0.5, 60, 0.9)
 tone(0.78, 420, 70, 0.4, 0.4, 5)
 tone(1.78, 110, 105, 0.32, 0.22, 6, 'square')
@@ -86,7 +96,7 @@ chime(5.60, [784, 1047, 1319, 1568], 0.07, 0.14)
 
 peak = max(abs(x) for x in buf) or 1
 gain = 0.89 / peak
-with wave.open('ad.wav', 'wb') as w:
+with wave.open('ad-' + VARIANT + '.wav', 'wb') as w:
     w.setnchannels(2)
     w.setsampwidth(2)
     w.setframerate(SR)
