@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Залипалка</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800&family=Manrope:wght@500;700&display=swap">
+<style>
+  /* Layout: one vertical 9:16 stage that fills the screen, controls docked beneath it */
+  :root {
+    --ink: #080a14;
+    --panel: #12162a;
+    --line: #262c48;
+    --text: #eef0fb;
+    --muted: #8e95b8;
+    --spark: #ffd166;
+    --font-display: "Unbounded", "Arial Black", system-ui, sans-serif;
+    --font-ui: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+    color-scheme: dark;
+  }
+  html { height: 100%; box-sizing: border-box; background: var(--ink); }
+  body { height: 100%; margin: 0; background: var(--ink); color: var(--text); font-family: var(--font-ui); }
+  *, *::before, *::after { box-sizing: border-box; }
+
+  .app {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-inline: 16px;
+    padding-block: 12px;
+  }
+  .app.rec { padding: 0; gap: 0; }
+
+  .stage-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    place-items: center;
+  }
+  canvas {
+    display: block;
+    border-radius: 20px;
+    touch-action: manipulation;
+    cursor: pointer;
+    box-shadow: 0 0 0 1px var(--line);
+  }
+  .app.rec canvas { border-radius: 0; box-shadow: none; }
+
+  .toast {
+    position: absolute;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    max-width: calc(100% - 32px);
+    padding: 10px 16px;
+    border-radius: 999px;
+    background: var(--panel);
+    color: var(--text);
+    font-size: 14px;
+    text-align: center;
+    pointer-events: none;
+    transition: opacity .4s;
+  }
+  .toast.fade { opacity: 0; }
+
+  .controls {
+    width: 100%;
+    max-width: 560px;
+    margin-inline: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+
+  button {
+    font: 700 14px/1 var(--font-ui);
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 11px 16px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s, color .15s;
+  }
+  button:hover { border-color: var(--muted); }
+  button:focus-visible { outline: 2px solid var(--spark); outline-offset: 2px; }
+  .mode[aria-pressed="true"] {
+    background: var(--spark);
+    border-color: var(--spark);
+    color: var(--ink);
+  }
+  #sound[aria-pressed="true"] { border-color: var(--spark); color: var(--spark); }
+  .hint {
+    margin: 0;
+    font-size: 13px;
+    color: var(--muted);
+    text-align: center;
+    text-wrap: balance;
+  }
+</style>
+</head>
+<body>
+
+<main class="app" id="app">
+  <div class="stage-wrap" id="wrap">
+    <canvas id="stage" aria-label="Анимация с прыгающими шарами"></canvas>
+    <div class="toast" id="toast" hidden>Нажмите на экран, чтобы вернуть кнопки</div>
+  </div>
+
+  <section class="controls" id="controls" aria-label="Управление">
+    <div class="row" id="modes">
+      <button class="mode" id="m-escape" data-mode="escape" aria-pressed="true">Побег</button>
+      <button class="mode" id="m-grow" data-mode="grow" aria-pressed="false">Растущий шар</button>
+      <button class="mode" id="m-rings" data-mode="rings" aria-pressed="false">Кольца</button>
+      <button class="mode" id="m-pend" data-mode="pend" aria-pressed="false">Маятники</button>
+    </div>
+    <div class="row">
+      <button id="sound" aria-pressed="false">Звук выкл</button>
+      <button id="pause">Пауза</button>
+      <button id="restart">Заново</button>
+      <button id="rec">Режим съёмки</button>
+    </div>
+    <p class="hint" id="hint">Нажмите на экран, чтобы бросить ещё шар.</p>
+  </section>
+</main>
+
+<script>
+(() => {
+  const W = 1080, H = 1920, CX = 540, CY = 1080, TAU = Math.PI * 2, G = 1500;
+  const cv = document.getElementById('stage');
+  const ctx = cv.getContext('2d');
+  cv.width = W; cv.height = H;
+  const wrap = document.getElementById('wrap');
+  const app = document.getElementById('app');
+  const controls = document.getElementById('controls');
+  const toast = document.getElementById('toast');
+  const hint = document.getElementById('hint');
+
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const angDiff = (a, b) => {
+    let d = (a - b) % TAU;
+    if (d > Math.PI) d -= TAU;
+    if (d < -Math.PI) d += TAU;
+    return d;
+  };
+
+  function fit() {
+    const r = wrap.getBoundingClientRect();
+    const s = Math.max(0.01, Math.min(r.width / W, r.height / H));
+    cv.style.width = W * s + 'px';
+    cv.style.height = H * s + 'px';
+  }
+  new ResizeObserver(fit).observe(wrap);
+  fit();
+
+  /* ---------- Sound: soft plucks on a major pentatonic scale ---------- */
+  let ac = null, master = null, soundOn = false, notesThisFrame = 0;
+  const SCALE = [0, 2, 4, 7, 9];
+  function initAudio() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    ac = new AC();
+    const comp = ac.createDynamicsCompressor();
+    master = ac.createGain();
+    master.gain.value = 0.6;
+    master.connect(comp);
+    comp.connect(ac.destination);
+  }
+  function freqOf(step) {
+    const oct = Math.floor(step / 5);
+    const n = SCALE[((step % 5) + 5) % 5];
+    return 261.63 * Math.pow(2, oct + n / 12);
+  }
+  function pluck(step, vol = 0.2, dur = 0.45, type = 'triangle', force = false) {
+    if (!soundOn || !ac) return;
+    if (!force && notesThisFrame >= 4) return;
+    notesThisFrame++;
+    const t = ac.currentTime;
+    const o = ac.createOscillator();
+    const g = ac.createGain();
+    o.type = type;
+    o.frequency.value = freqOf(Math.min(step, 22));
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g);
+    g.connect(master);
+    o.start(t);
+    o.stop(t + dur + 0.05);
+  }
+  const chord = steps => steps.forEach(s => pluck(s, 0.14, 1.2, 'sine', true));
+
+  /* ---------- Particles ---------- */
+  let parts = [];
+  function burst(x, y, hue, n, sp) {
+    for (let i = 0; i < n; i++) {
+      const a = rand(0, TAU), s = rand(sp * 0.3, sp);
+      parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1, hue: hue + rand(-20, 20), r: rand(4, 10) });
+    }
+  }
+  function stepParts(dt) {
+    for (const p of parts) {
+      p.vy += G * 0.6 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt * 0.8;
+    }
+    parts = parts.filter(p => p.life > 0 && p.y < H + 40);
+  }
+  function drawParts() {
+    for (const p of parts) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = `hsl(${p.hue},95%,65%)`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /* ---------- Shared physics and drawing ---------- */
+  // Keeps a ball inside a circle of radius R, except where the ring has a gap.
+  function bounceInside(b, R, gapAng, gapHalf) {
+    const dx = b.x - CX, dy = b.y - CY;
+    const d = Math.hypot(dx, dy) || 1e-6;
+    if (d + b.r < R) return false;
+    if (gapHalf > 0 && Math.abs(angDiff(Math.atan2(dy, dx), gapAng)) < gapHalf - b.r / R) return false;
+    if (d > R) return false;
+    const nx = dx / d, ny = dy / d;
+    b.x = CX + nx * (R - b.r);
+    b.y = CY + ny * (R - b.r);
+    const vn = b.vx * nx + b.vy * ny;
+    if (vn > 0) {
+      b.vx -= 2 * vn * nx;
+      b.vy -= 2 * vn * ny;
+      return true;
+    }
+    return false;
+  }
+  function ensureSpeed(b, min) {
+    const s = Math.hypot(b.vx, b.vy);
+    if (s < min && s > 0) { b.vx *= min / s; b.vy *= min / s; }
+  }
+  function moveBall(b, dt) {
+    b.vy += G * dt;
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+  }
+  function ring(R, gapAng, gap, color, width, glow) {
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    ctx.shadowColor = glow;
+    ctx.shadowBlur = 28;
+    ctx.beginPath();
+    if (gap > 0) ctx.arc(CX, CY, R, gapAng + gap / 2, gapAng + TAU - gap / 2);
+    else ctx.arc(CX, CY, R, 0, TAU);
+    ctx.stroke();
+    ctx.restore();
+  }
+  function dot(x, y, r, color, glow) {
+    ctx.save();
+    if (glow) { ctx.shadowColor = glow; ctx.shadowBlur = 24; }
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.fill();
+    ctx.restore();
+  }
+  function headline(big, small) {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '800 150px Unbounded, "Arial Black", sans-serif';
+    ctx.fillText(big, CX, 330);
+    ctx.fillStyle = 'rgba(238,240,251,0.7)';
+    ctx.font = '700 46px Manrope, Arial, sans-serif';
+    ctx.fillText(small, CX, 410);
+  }
+  function caption(text) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(238,240,251,0.5)';
+    ctx.font = '700 40px Manrope, Arial, sans-serif';
+    ctx.fillText(text, CX, 1770);
+  }
+  function kick(b) {
+    b.vx += rand(-350, 350);
+    b.vy -= rand(400, 700);
+  }
+
+  let clock = 0;
+
+  /* ---------- Mode 1: escape from the spinning ring ---------- */
+  const escape = {
+    hint: 'Нажмите на экран, чтобы бросить ещё шар.',
+    init() {
+      this.R = 440; this.gap = 0.6; this.ang = -Math.PI / 2; this.spin = 1.2;
+      this.hue = 0; this.wait = 0; this.peak = 1;
+      this.out = [];
+      this.balls = [this.ball(CX, CY)];
+    },
+    ball(x, y) {
+      const a = rand(0, TAU), s = rand(380, 620);
+      this.hue = (this.hue + 47) % 360;
+      return { x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, r: 18, hue: this.hue, cool: 0 };
+    },
+    step(dt) {
+      this.ang += this.spin * dt;
+      const keep = [];
+      for (const b of this.balls) {
+        moveBall(b, dt);
+        b.cool -= dt;
+        if (bounceInside(b, this.R, this.ang, this.gap / 2) && b.cool <= 0) {
+          b.cool = 0.08;
+          pluck(Math.floor(b.hue / 36) + 3, 0.16 / Math.sqrt(1 + this.balls.length / 8), 0.35);
+        }
+        if (Math.hypot(b.x - CX, b.y - CY) > this.R + b.r) {
+          this.out.push(b);
+          burst(b.x, b.y, b.hue, 10, 300);
+          pluck(Math.floor(b.hue / 36) + 8, 0.2, 0.6, 'sine');
+          if (this.balls.length + this.out.length < 240) keep.push(this.ball(CX, CY), this.ball(CX, CY));
+        } else {
+          keep.push(b);
+        }
+      }
+      this.balls = keep;
+      this.peak = Math.max(this.peak, keep.length);
+      for (const b of this.out) moveBall(b, dt);
+      this.out = this.out.filter(b => b.y < H + 60 && b.x > -60 && b.x < W + 60);
+      if (!this.balls.length && !this.out.length) {
+        this.wait += dt;
+        if (this.wait > 1.2) this.init();
+      }
+    },
+    draw() {
+      const hue = (clock * 40) % 360;
+      ring(this.R, this.ang, this.gap, '#ffffff', 10, `hsl(${hue},90%,60%)`);
+      for (const b of this.out) dot(b.x, b.y, b.r, `hsla(${b.hue},90%,62%,0.75)`);
+      for (const b of this.balls) dot(b.x, b.y, b.r, `hsl(${b.hue},90%,62%)`);
+      headline(String(this.balls.length), `шаров внутри · рекорд ${this.peak}`);
+      caption('Сбежал один, появились два');
+    },
+    tap(x, y) {
+      const inside = Math.hypot(x - CX, y - CY) < this.R - 30;
+      this.balls.push(inside ? this.ball(x, y) : this.ball(CX, CY));
+    }
+  };
+
+  /* ---------- Mode 2: a ball that grows with every bounce ---------- */
+  const grow = {
+    hint: 'Нажмите на экран, чтобы подтолкнуть шар.',
+    init() {
+      this.R = 440; this.n = 0; this.pop = 0; this.trail = [];
+      this.b = { x: CX - 120, y: CY - 150, vx: 420, vy: 0, r: 24, hue: 0, cool: 0 };
+    },
+    step(dt) {
+      if (this.pop > 0) {
+        this.pop -= dt;
+        if (this.pop <= 0) this.init();
+        return;
+      }
+      const b = this.b;
+      moveBall(b, dt);
+      b.cool -= dt;
+      if (!bounceInside(b, this.R, 0, 0)) return;
+      this.n++;
+      b.hue = (this.n * 11) % 360;
+      const d = Math.hypot(b.x - CX, b.y - CY) || 1;
+      burst(CX + (b.x - CX) / d * this.R, CY + (b.y - CY) / d * this.R, b.hue, 6, 250);
+      if (b.cool <= 0) { b.cool = 0.05; pluck(this.n % 15, 0.22, 0.5); }
+      b.r = Math.min(this.R - 2, b.r + 5);
+      const nd = Math.hypot(b.x - CX, b.y - CY) || 1;
+      if (nd + b.r > this.R) {
+        b.x = CX + (b.x - CX) / nd * (this.R - b.r);
+        b.y = CY + (b.y - CY) / nd * (this.R - b.r);
+      }
+      ensureSpeed(b, 520);
+      if (b.r >= this.R - 8) {
+        this.pop = 1.4;
+        this.trail = [];
+        burst(b.x, b.y, b.hue, 160, 900);
+        chord([10, 12, 14]);
+      }
+    },
+    tick() {
+      if (this.pop > 0) return;
+      this.trail.push({ x: this.b.x, y: this.b.y, r: this.b.r, hue: this.b.hue });
+      if (this.trail.length > 18) this.trail.shift();
+    },
+    draw() {
+      ring(this.R, 0, 0, '#ffffff', 8, 'rgba(255,255,255,0.5)');
+      ctx.lineWidth = 4;
+      this.trail.forEach((t, i) => {
+        ctx.strokeStyle = `hsla(${t.hue},90%,62%,${(i / this.trail.length) * 0.4})`;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, t.r, 0, TAU);
+        ctx.stroke();
+      });
+      if (this.pop <= 0) {
+        const b = this.b;
+        dot(b.x, b.y, b.r, `hsl(${b.hue},90%,62%)`, `hsl(${b.hue},90%,55%)`);
+      }
+      headline(String(this.n), 'отскоков');
+      caption('Шар растёт с каждым ударом');
+    },
+    tap() {
+      if (this.pop <= 0) kick(this.b);
+    }
+  };
+
+  /* ---------- Mode 3: break out through nested spinning rings ---------- */
+  const rings = {
+    hint: 'Нажмите на экран, чтобы подтолкнуть шарик.',
+    init() {
+      this.N = 10; this.cur = 0; this.stuck = 0; this.done = 0; this.trail = [];
+      this.rs = [];
+      for (let i = 0; i < this.N; i++) {
+        this.rs.push({
+          R: 110 + i * 36,
+          ang: rand(0, TAU),
+          spin: (0.55 + i * 0.1) * (i % 2 ? -1 : 1),
+          hue: (i * 33 + 190) % 360,
+          gap: 0.62,
+          alive: true
+        });
+      }
+      const a = rand(0, TAU);
+      this.b = { x: CX, y: CY, vx: Math.cos(a) * 480, vy: Math.sin(a) * 480, r: 13, cool: 0 };
+    },
+    shatter(r) {
+      for (let k = 0; k < 90; k++) {
+        const a = rand(0, TAU), s = rand(150, 500);
+        parts.push({
+          x: CX + Math.cos(a) * r.R, y: CY + Math.sin(a) * r.R,
+          vx: Math.cos(a) * s + rand(-80, 80), vy: Math.sin(a) * s + rand(-80, 80),
+          life: 1, hue: r.hue + rand(-15, 15), r: rand(3, 7)
+        });
+      }
+    },
+    step(dt) {
+      for (const r of this.rs) r.ang += r.spin * dt;
+      const b = this.b;
+      moveBall(b, dt);
+      b.cool -= dt;
+      if (this.cur >= this.N) {
+        this.done += dt;
+        if (this.done > 2.2) this.init();
+        return;
+      }
+      const r = this.rs[this.cur];
+      this.stuck += dt;
+      // If the ball circles too long, the current gap slowly widens so the run never stalls.
+      r.gap = 0.62 + Math.min(0.9, Math.max(0, this.stuck - 6) * 0.08);
+      if (bounceInside(b, r.R, r.ang, r.gap / 2)) {
+        if (b.cool <= 0) { b.cool = 0.05; pluck(this.cur + 2, 0.2, 0.4); }
+        ensureSpeed(b, 380);
+      }
+      if (Math.hypot(b.x - CX, b.y - CY) > r.R + b.r) {
+        r.alive = false;
+        this.shatter(r);
+        this.cur++;
+        this.stuck = 0;
+        chord([this.cur + 4, this.cur + 6, this.cur + 8]);
+      }
+    },
+    tick() {
+      this.trail.push({ x: this.b.x, y: this.b.y });
+      if (this.trail.length > 14) this.trail.shift();
+    },
+    draw() {
+      for (const r of this.rs) {
+        if (r.alive) ring(r.R, r.ang, r.gap, `hsl(${r.hue},90%,62%)`, 10, `hsl(${r.hue},90%,55%)`);
+      }
+      this.trail.forEach((t, i) => {
+        ctx.fillStyle = `rgba(255,255,255,${(i / this.trail.length) * 0.35})`;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, this.b.r * (i / this.trail.length), 0, TAU);
+        ctx.fill();
+      });
+      dot(this.b.x, this.b.y, this.b.r, '#ffffff', 'rgba(255,255,255,0.9)');
+      headline(`${this.cur} / ${this.N}`, 'колец пробито');
+      caption('Шарик ищет выход наружу');
+    },
+    tap() {
+      if (this.cur < this.N) kick(this.b);
+    }
+  };
+
+  /* ---------- Mode 4: pendulum wave, realigns every 60 seconds ---------- */
+  const pend = {
+    hint: 'Нажмите на экран, чтобы запустить волну заново.',
+    init() {
+      this.n = 15; this.T = 60; this.base = 51; this.A = 0.42; this.t = 0;
+      this.py = 520; this.Lmax = 1150;
+      this.prev = new Array(this.n).fill(1);
+      this.trails = Array.from({ length: this.n }, () => []);
+    },
+    phase(i) {
+      return Math.cos(TAU * (this.base + i) / this.T * this.t);
+    },
+    pos(i) {
+      const L = this.Lmax * Math.pow(this.base / (this.base + i), 2);
+      const th = this.A * this.phase(i);
+      return { x: CX + L * Math.sin(th), y: this.py + L * Math.cos(th) };
+    },
+    step(dt) {
+      this.t += dt;
+      if (this.t >= this.T) this.t -= this.T;
+      for (let i = 0; i < this.n; i++) {
+        const s = this.phase(i) >= 0 ? 1 : -1;
+        if (s !== this.prev[i]) {
+          this.prev[i] = s;
+          pluck(i, 0.12, 0.9, 'sine');
+        }
+      }
+    },
+    tick() {
+      for (let i = 0; i < this.n; i++) {
+        const tr = this.trails[i];
+        tr.push(this.pos(i));
+        if (tr.length > 16) tr.shift();
+      }
+    },
+    draw() {
+      ctx.lineWidth = 2;
+      for (let i = 0; i < this.n; i++) {
+        const p = this.pos(i);
+        const hue = (i * 24) % 360;
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.beginPath();
+        ctx.moveTo(CX, this.py);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        const tr = this.trails[i];
+        tr.forEach((t, k) => {
+          ctx.fillStyle = `hsla(${hue},90%,62%,${(k / tr.length) * 0.3})`;
+          ctx.beginPath();
+          ctx.arc(t.x, t.y, 20 * (k / tr.length), 0, TAU);
+          ctx.fill();
+        });
+        dot(p.x, p.y, 20, `hsl(${hue},90%,62%)`, `hsl(${hue},90%,55%)`);
+      }
+      dot(CX, this.py, 10, '#ffffff');
+      const left = Math.ceil(this.T - this.t);
+      headline(`0:${String(left % 60).padStart(2, '0')}`, 'до полного совпадения');
+      caption('15 маятников, у каждого своя длина');
+    },
+    tap() {
+      this.init();
+    }
+  };
+
+  /* ---------- Loop and controls ---------- */
+  const modes = { escape, grow, rings, pend };
+  let modeKey = 'escape';
+  try {
+    const saved = localStorage.getItem('zalipalka-mode');
+    if (saved && modes[saved]) modeKey = saved;
+  } catch (e) {}
+  let mode = modes[modeKey];
+  let running = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const bg = ctx.createRadialGradient(CX, CY, 0, CX, CY, 1300);
+  bg.addColorStop(0, '#171b36');
+  bg.addColorStop(1, '#06070e');
+
+  function draw() {
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+    mode.draw();
+    drawParts();
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+    notesThisFrame = 0;
+    if (running) {
+      clock += dt;
+      const sub = 4;
+      for (let i = 0; i < sub; i++) mode.step(dt / sub);
+      if (mode.tick) mode.tick();
+      stepParts(dt);
+    }
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  function setMode(key) {
+    modeKey = key;
+    mode = modes[key];
+    parts = [];
+    mode.init();
+    hint.textContent = mode.hint;
+    document.querySelectorAll('.mode').forEach(btn => {
+      btn.setAttribute('aria-pressed', String(btn.dataset.mode === key));
+    });
+    try { localStorage.setItem('zalipalka-mode', key); } catch (e) {}
+  }
+
+  document.getElementById('modes').addEventListener('click', e => {
+    const btn = e.target.closest('.mode');
+    if (btn) setMode(btn.dataset.mode);
+  });
+
+  const soundBtn = document.getElementById('sound');
+  soundBtn.addEventListener('click', () => {
+    if (!ac) initAudio();
+    if (ac && ac.state === 'suspended') ac.resume();
+    soundOn = !soundOn && !!ac;
+    soundBtn.textContent = soundOn ? 'Звук вкл' : 'Звук выкл';
+    soundBtn.setAttribute('aria-pressed', String(soundOn));
+  });
+
+  const pauseBtn = document.getElementById('pause');
+  function syncPause() { pauseBtn.textContent = running ? 'Пауза' : 'Старт'; }
+  pauseBtn.addEventListener('click', () => { running = !running; syncPause(); });
+  syncPause();
+
+  document.getElementById('restart').addEventListener('click', () => {
+    parts = [];
+    mode.init();
+  });
+
+  let wakeLock = null, toastTimer = 0;
+  function setRec(on) {
+    app.classList.toggle('rec', on);
+    controls.hidden = on;
+    clearTimeout(toastTimer);
+    if (on) {
+      toast.hidden = false;
+      toast.classList.remove('fade');
+      toastTimer = setTimeout(() => {
+        toast.classList.add('fade');
+        toastTimer = setTimeout(() => { toast.hidden = true; }, 400);
+      }, 1800);
+      if (navigator.wakeLock) navigator.wakeLock.request('screen').then(l => { wakeLock = l; }).catch(() => {});
+    } else {
+      toast.hidden = true;
+      if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    }
+  }
+  document.getElementById('rec').addEventListener('click', () => setRec(true));
+
+  cv.addEventListener('click', e => {
+    if (app.classList.contains('rec')) { setRec(false); return; }
+    const r = cv.getBoundingClientRect();
+    mode.tap((e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H);
+  });
+
+  setMode(modeKey);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
